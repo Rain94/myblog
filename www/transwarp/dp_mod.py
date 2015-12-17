@@ -459,7 +459,7 @@ def update(sql, *args):
     '''
     return _update(sql, *args)
 
-
+'''
 if __name__=='__main__':
     logging.basicConfig(level=logging.DEBUG)
     create_engine('www-data', 'www-data', 'test')
@@ -467,3 +467,4 @@ if __name__=='__main__':
     update('create table user (id int primary key, name text, email text, passwd text, last_modified real)')
     import doctest
     doctest.testmod()
+'''
