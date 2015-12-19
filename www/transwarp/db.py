@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-import threading, functools, time
+import threading, functools, time, logging, uuid
 
 def next_id(t = None):
 	if t is None:
@@ -70,14 +70,12 @@ class _LazyConnection(object):
 class _Dbctx(threading.local):
 	def __init__(self):
 		self.connection = None
-		self.transaction = 0
 
 	def is_init(self):
 		return self.connection is not None
 
 	def init(self):
 		self.connection = _LazyConnection()
-		self.transaction = 0
 
 	def cleanup(self):
 		self.connection.cleanup()
@@ -92,7 +90,7 @@ class _ConnectionCtx(object):
 	def __enter__(self):
 		global _db_ctx
 		self.should_cleanup = False
-		if not _db_ctx.is_init:
+		if not _db_ctx.is_init():
 			_db_ctx.init()
 			self.should_cleanup = True
 		return self
@@ -121,8 +119,14 @@ def _select(sql, first, *args):
 			names = [x[0] for x in cursor.description]
 		if first:
 			values = cursor.fetchone()
+
 			if not values:
 				return None
+
+			a = values
+			while a is not None:
+				a = cursor.fetchone()
+				
 			return Dict(names, values)
 		values = cursor.fetchall()
 		if not values:
@@ -151,10 +155,10 @@ def _update(sql, *args):
 	cursor = None
 	sql = sql.replace('?', '%s')
 	try:
-		cursor = _db_ctx.connection.cursor()
+		cursor = _db_ctx.cursor()
 		cursor.execute(sql, args)
 		_db_ctx.connection.commit()
-		return cursor.rowcount()
+		return cursor.rowcount
 	finally:
 		if cursor:
 			cursor.close()

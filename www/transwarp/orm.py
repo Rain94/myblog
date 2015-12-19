@@ -99,8 +99,8 @@ def _gen_sql(table, mappings):
         if f.nullable:
             sql.append(' `%s` %s,' % (f.name, f.ddl))
         else:
-            sql.append(' `%s` %s NOT NUll,' % (f.name, f.ddl))
-    sql.append(' primary_key (`%s`)' % pk)
+            sql.append(' `%s` %s not null,' % (f.name, f.ddl))
+    sql.append(' primary key (`%s`)' % pk)
     sql.append(');')
     return '\n'.join(sql)
 
@@ -136,7 +136,7 @@ class ModelMetaclass(type):
             attrs['__table__'] = name.lower()
         attrs['__mapping__'] = mappings
         attrs['__primary_key__'] = primary_key
-        attrs['__sql__'] = _gen_sql(attrs['__table__'], mappings)
+        attrs['__sql__'] = lambda self: _gen_sql(attrs['__table__'], attrs['__mapping__'])
 
         return type.__new__(cls, name, bases, attrs)
 
