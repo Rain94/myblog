@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
 
 import db
+import logging 
 
 class Field(object):
 
     _count = 0
 
     def __init__(self, **kw):
-        slef.name = kw.get('name', None)
+        self.name = kw.get('name', None)
         self._default = kw.get('default', None)
         self.primary_key = kw.get('primary_key', False)
-        self.nullable = kw.get('nullable', False)
+        self.nullable = kw.get('nullable', True)
         self.updatable = kw.get('updatable', True)
         self.insertable = kw.get('insertable', True)
         self.ddl = kw.get('ddl', '')
@@ -46,7 +47,7 @@ class IntegerField(Field):
             kw['default'] = 0
         if not 'ddl' in kw:
             kw['ddl'] = 'bigint'
-        super(StringField, self).__init__(**kw)
+        super(IntegerField, self).__init__(**kw)
 
 class FloatField(Field):
 
@@ -55,7 +56,7 @@ class FloatField(Field):
             kw['default'] = 0.0
         if not 'ddl' in kw:
             kw['ddl'] = 'real'
-        super(StringField, self).__init__(**kw)
+        super(FloatField, self).__init__(**kw)
 
 class BooleanField(Field):
 
@@ -64,7 +65,7 @@ class BooleanField(Field):
             kw['default'] = False
         if not 'ddl' in kw:
             kw['ddl'] = 'bool'
-        super(StringField, self).__init__(**kw)
+        super(BooleanField, self).__init__(**kw)
 
 class TextField(Field):
 
@@ -73,7 +74,7 @@ class TextField(Field):
             kw['default'] = ''
         if not 'ddl' in kw:
             kw['ddl'] = 'text'
-        super(StringField, self).__init__(**kw)
+        super(TextField, self).__init__(**kw)
 
 class BlobField(Field):
 
@@ -82,24 +83,24 @@ class BlobField(Field):
             kw['default'] = ''
         if not 'ddl' in kw:
             kw['ddl'] = 'blob'
-        super(StringField, self).__init__(**kw)
+        super(BlobField, self).__init__(**kw)
 
 class VersionField(Field):
 
     def __init__(self, name = None):
         super(VersionField, self).__init__(name = name, default = 0, ddl = 'bigint')
 
-_triggers = frozenset(['pre_insert', 'pre_update', 'pre_delete'])
-
 def _gen_sql(table, mappings):
     pk = None
-    sql = ['-- generating SQL for %s:' % table_name, 'create table `%s` (' % table_name]
+    sql = ['-- generating SQL for %s:' % table, 'create table `%s` (' % table]
     for f in sorted(mappings.values(), lambda x, y: cmp(x._order, y._order)):
         if f.primary_key:
             pk = f.name
-
-        sql.append(' `%s` %s,' % f.name, f.ddl)
-    sql.append(' primary_key (`%s`)', f.name)
+        if f.nullable:
+            sql.append(' `%s` %s,' % (f.name, f.ddl))
+        else:
+            sql.append(' `%s` %s NOT NUll,' % (f.name, f.ddl))
+    sql.append(' primary_key (`%s`)' % pk)
     sql.append(');')
     return '\n'.join(sql)
 
@@ -111,9 +112,17 @@ class ModelMetaclass(type):
         primary_key = None
         for k, v in attrs.iteritems():
             if isinstance(v, Field):
+                if not v.name:
+                    v.name = k
                 if v.primary_key:
                     if primary_key:
                         raise TypeError('More than one primary_key.')
+                    if v.updatable:
+                        logging.warning('Note: change primary key to non-updatable')
+                        v.updatable = False
+                    if v.nullable:
+                        logging.warning('Note: change primary key to non-nullable')
+                        v.nullable = False
                     primary_key = v
                 mappings[k] = v
 
@@ -123,14 +132,11 @@ class ModelMetaclass(type):
         for k in mappings.iterkeys():
             attrs.pop(k)
 
-        attrs['__table__'] = name.lower()
+        if '__table__' not in attrs:
+            attrs['__table__'] = name.lower()
         attrs['__mapping__'] = mappings
-        attrs['__primary_key'] = primary_key
-        attrs['__sql__'] = lambda self: _gen_sql(attrs['__table__'], mappings)
-
-        for trigger in _triggers:
-            if not trigger in attrs:
-                attrs[trigger] = None
+        attrs['__primary_key__'] = primary_key
+        attrs['__sql__'] = _gen_sql(attrs['__table__'], mappings)
 
         return type.__new__(cls, name, bases, attrs)
 
@@ -156,18 +162,18 @@ class Model(dict):
 
     @classmethod
     def find_first(cls, where, *args):
-        d = db.select.one('select * from `%s` %s' % (cls.__table__, where), *args)
+        d = db.select_one('select * from `%s` %s' % (cls.__table__, where), *args)
         return cls(**d) if d else None
 
     @classmethod
     def find_all(cls):
         L = db.select('select * from `%s`' % cls.__table__)
-        return [cls(**d) for d in L]
+        return [cls(**d) for d in L] if L else None
 
     @classmethod
     def find_by(cls, where, *args):
         L = db.select('select * from `%s` %s' % (cls.__table__, where), *args)
-        return [cls(**d) for d in L]
+        return [cls(**d) for d in L] if L else None
 
     @classmethod
     def count_all(cls):
@@ -178,17 +184,16 @@ class Model(dict):
         return db.select_int('select count(`%s`) from `%s` %s' % (cls.__primary_key__, cls.__table__, where), *args)
 
     def update(self):
-        self.pre_update and self.pre_update()
         L = []
         args = []
         for k, v in self.__mapping__.iteritems():
-            if v.insertable
+            if v.updatable:
                 if hasattr(self, k):
                     arg = getattr(self, k)
                 else:
                     arg = v.default
                     setattr(self, k, arg)
-                L.append(' `%s` = ?' % k)
+                L.append(' `%s` = ? ' % k)
                 args.append(arg)
 
         pk = self.__primary_key__.name
@@ -197,15 +202,12 @@ class Model(dict):
         return self
 
     def delete(self):
-        self.pre_delete and self.pre_delete()
         pk = self.__primary_key__.name
         args = (getattr(self, pk),)
         db.update('delete from `%s` where `%s` = ?' % (self.__table__, pk), *args)
         return self
 
     def insert(self):
-        self.pre_insert and self.pre_insert()
-
         params = {}
 
         for k, v in self.__mapping__.iteritems():
